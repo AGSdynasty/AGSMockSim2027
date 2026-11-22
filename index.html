@@ -167,7 +167,7 @@ dialog .offer+.offer{margin-top:16px;padding-top:14px;border-top:1px solid var(-
 
  <section id="room" class="hide">
   <div class="clock"><div class="clockin"><div><h2 id="ckTitle"></h2><div class="sub" id="ckSub"></div></div><div id="ckBadge"></div></div>
-   <div class="ctrls"><button class="btn" id="bSim">Sim to my pick</button><button class="btn sec" id="bAuto">Auto-pick for me</button><button class="btn sec" id="bRestart">Restart</button></div></div>
+   <div class="ctrls"><button class="btn" id="bPause">Start draft</button><button class="btn sec" id="bSim">Sim to my pick</button><button class="btn sec" id="bAuto">Auto-pick for me</button><button class="btn sec" id="bRestart">Restart</button><select id="sSpeed" aria-label="Draft speed" style="width:auto;margin:0;min-height:42px"><option value="1400">Slow</option><option value="700" selected>Normal</option><option value="250">Fast</option></select></div></div>
   <div id="offerBox"></div>
   <div class="boardhead"><h3>Draft board</h3><div class="legend"><span class="pos QB">QB</span><span class="pos RB">RB</span><span class="pos WR">WR</span><span class="pos TE">TE</span><span class="small">Gold outline = your picks</span></div></div>
   <div id="vBoard" class="board"></div>
@@ -281,7 +281,7 @@ function newState(rand){
  });
  var fut=LG.fut.map(function(f){return Object.assign({},f)});
  var mood={};LG.teams.forEach(function(x){mood[x.name]=Math.random()*0.07});
- return {picks:picks,players:players,i:0,taken:{},pos:'ALL',q:'',sort:'rank',tab:'players',timer:null,fut:fut,mood:mood,trades:[],rec:{},offers:[],offerN:0,oid:0,ver:0,offFor:-1};
+ return {picks:picks,players:players,i:0,taken:{},pos:'ALL',q:'',sort:'rank',tab:'players',timer:null,paused:true,started:false,fut:fut,mood:mood,trades:[],rec:{},offers:[],offerN:0,oid:0,ver:0,offFor:-1};
 }
 function renderSim(rand){
  var box=$('#simBox'),body=$('#simBody');box.classList.toggle('hide',!rand);if(!rand)return;
@@ -345,8 +345,8 @@ function advance(){
  var paused=offerCheck();
  render();
  if(pk.owner===me){return}
- if(paused)return;
- S.timer=setTimeout(function(){make(botPick(pk.owner));advance()},S.fast?0:420);
+ if(paused||S.paused)return;
+ S.timer=setTimeout(function(){make(botPick(pk.owner));advance()},S.fast?0:(+$('#sSpeed').value||700));
 }
 function simToMe(){
  var go=function(){
@@ -358,8 +358,9 @@ function simToMe(){
  };
  clearTimeout(S.timer);S.offers=[];S.offFor=S.i;go();
 }
-$('#bSim').onclick=function(){if(!S)return;simToMe()};
-$('#bAuto').onclick=function(){if(!S)return;var pk=curPick();if(!pk||pk.owner!==me)return;make(botPickBest(me));advance()};
+$('#bSim').onclick=function(){if(!S)return;S.started=true;S.paused=false;simToMe()};
+$('#bPause').onclick=function(){if(!S)return;if(!S.started){S.started=true;S.paused=false}else S.paused=!S.paused;advance()};
+$('#bAuto').onclick=function(){if(!S)return;var pk=curPick();if(!pk||pk.owner!==me)return;S.started=true;S.paused=false;make(botPickBest(me));advance()};
 // render
 function posChip(p){return el('span',p,'pos '+p)}
 function teamChip(p){return el('span',p.est?'~'+p.shownTeam:(p.shownTeam||'TBD'),'tm'+(p.shownTeam&&!p.est?'':' tbd'))}
@@ -375,6 +376,8 @@ function render(){
  var b=$('#ckBadge');b.textContent='';
  if(mine){b.appendChild(el('span','YOUR PICK','pill chip you'))}else if(nxt){b.appendChild(el('span','Your next pick: '+pickLabel(nxt.overall)+' ('+(nxt.overall-pk.overall)+' away)','pill'))}
  $('#bSim').disabled=mine;$('#bAuto').disabled=!mine;
+ $('#bPause').textContent=!S.started?'Start draft':S.paused?'Resume':'Pause';$('#bPause').classList.toggle('sec',S.started&&!S.paused);
+ if(!S.started)$('#ckSub').textContent='Look around, make trades, then press Start draft when you are ready.';else if(S.paused)$('#ckSub').textContent='Paused. Press Resume to keep going.';
  if(mine&&!S.rec[pk.overall])snapRec(pk);
  renderOffers();
  renderTab();
@@ -414,7 +417,7 @@ function renderPlayers(){
   var mid=el('div');var nm=el('div',p.name,'nm');nm.onclick=function(){detail(p)};mid.appendChild(nm);
   var meta=el('div',null,'meta');meta.appendChild(posChip(p.pos));meta.appendChild(teamChip(p));meta.appendChild(el('span',projText(p)));mid.appendChild(meta);
   r.appendChild(mid);
-  var bt=el('button','Draft','btn');bt.disabled=!mine;bt.onclick=function(){make(p);advance()};r.appendChild(bt);
+  var bt=el('button','Draft','btn');bt.disabled=!mine;bt.onclick=function(){S.started=true;S.paused=false;make(p);advance()};r.appendChild(bt);
   box.appendChild(r);
  });
  if(!list.length)box.appendChild(el('div','No players match.','small'));
@@ -664,18 +667,21 @@ function genUpOffers(){
  LG.teams.forEach(function(t){var T=t.name;if(T===me)return;
   var theirs=assetsOf(T).filter(function(x){return x.k==='p'&&x.overall>cur.overall&&x.overall<=cur.overall+22});
   if(!theirs.length)return;
-  var q=theirs[0];var tgt=botPickBest(T);var idx=a.indexOf(tgt);var before=q.overall-S.i-1;
+  var tgt=botPickBest(T);var idx=a.indexOf(tgt);var q0=theirs[0];var before=q0.overall-S.i-1;
   if(idx<0||idx>Math.max(0,before*0.85)||idx>9)return;
   if(Math.random()>0.85)return;
-  var want=userVal(me0)*(1.0+Math.random()*0.08)*(teamObj(me).contender?1:1.06);
-  var pool=assetsOf(T).filter(function(x){return x!==q&&x.id!==q.id});
-  var f=fillTo(want,userVal(q),pool,1,userVal);
-  var recv=[q].concat(f.add);
-  var d=decide(T,[me0],recv,1.2);
-  if(!d.ok){var f2=fillTo(want*0.95,userVal(q),pool,1,userVal);recv=[q].concat(f2.add);d=decide(T,[me0],recv,1.2);if(!d.ok)return}
-  var need=userVal(me0)*(teamObj(me).contender?0.97:1.03);
-  if(sideU(recv)<need)return;
-  if(rnd(me0)<=3&&Math.max.apply(null,recv.map(userVal))<0.8*userVal(me0))return;
+  var need=userVal(me0)*(teamObj(me).contender?0.88:0.93),topMin=(rnd(me0)===1?0.6:0.8)*userVal(me0);
+  var allA=assetsOf(T),best=null,bd=null;
+  theirs.forEach(function(q){
+   [null].concat(allA.filter(function(x){return x.id!==q.id})).forEach(function(ad){
+    var recv=ad?[q,ad]:[q];
+    if(rnd(me0)<=3&&Math.max.apply(null,recv.map(userVal))<topMin)return;
+    if(rnd(me0)===1&&!recv.some(function(x){return rnd(x)===1}))return;
+    var su=sideU(recv);if(su<need)return;
+    var dd=decide(T,[me0],recv,1.2);if(!dd.ok)return;
+    if(!best||su<best.su){best={su:su,recv:recv};bd=dd}})});
+  if(!best)return;
+  var recv=best.recv,d=bd;
   out.push({team:T,type:'up',send:[me0],recv:recv,hint:'They are looking for a '+tgt.pos+' and are worried the board will not get to them.',score:d.ratio});
  });
  out.sort(function(x,y){return y.score-x.score});
@@ -837,7 +843,7 @@ function tradeCard(){
  return c;
 }
 
-window.__sim={decide:decide,assetsOf:assetsOf,validAssets:validAssets,sim:simSeason,get S(){return S},opts:opts,start:startDraft,me:function(){return me}};
+window.__sim={genUp:genUpOffers,decide:decide,assetsOf:assetsOf,validAssets:validAssets,sim:simSeason,get S(){return S},opts:opts,start:startDraft,me:function(){return me}};
 })();
 </script>
 </body>
